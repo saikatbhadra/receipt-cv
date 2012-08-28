@@ -6,9 +6,49 @@ from scipy import ndimage
 import tesseract
 import scipy
 from math import *
+import os
+import sys
+import pyexiv2
 
-RECEIPT_PATH = "/media/psf/Home/Dropbox/Receipts/"
+RECEIPT_PATH = './images/'
 WAIT_TIME = 500
+
+def cv2array(im):
+	depth2dtype = {
+		cv2.IPL_DEPTH_8U: 'uint8',
+		cv2.IPL_DEPTH_8S: 'int8',
+		cv2.IPL_DEPTH_16U: 'uint16',
+		cv2.IPL_DEPTH_16S: 'int16',
+        cv2.IPL_DEPTH_32S: 'int32',
+        cv2.IPL_DEPTH_32F: 'float32',
+        cv2.IPL_DEPTH_64F: 'float64',
+    }
+
+	arrdtype=im.depth
+	a = np.fromstring(im.tostring(), dtype=depth2dtype[im.depth], 
+	count=im.width*im.height*im.nChannels)
+	a.shape = (im.height,im.width,im.nChannels)
+	return a
+
+def array2cv(a):
+	dtype2depth = {
+		'uint8':   cv2.IPL_DEPTH_8U,
+        'int8':    cv2.IPL_DEPTH_8S,
+        'uint16':  cv2.IPL_DEPTH_16U,
+        'int16':   cv2.IPL_DEPTH_16S,
+        'int32':   cv2.IPL_DEPTH_32S,
+        'float32': cv2.IPL_DEPTH_32F,
+        'float64': cv2.IPL_DEPTH_64F,
+    }
+	try:
+		nChannels = a.shape[2]
+	except:
+		nChannels = 1
+	cv_im = cv2.CreateImageHeader((a.shape[1],a.shape[0]),dtype2depth[str(a.dtype)],
+	nChannels)
+	cv2.SetData(cv_im, a.tostring(), a.dtype.itemsize*nChannels*a.shape[1])
+	return cv_im
+
 
 def mouse_call(event,x,y,flags,param):
     if (event == cv.CV_EVENT_LBUTTONUP) and (len(param) < 4):
@@ -60,22 +100,22 @@ def detect_corners(image,window):
 
     debug = image.copy()
     lines = cv2.HoughLines(binary.copy(),1, np.pi/180, 1000)
-    print lines
-    for rho,theta in lines[0]:
-        a = np.cos(theta)
-        b = np.sin(theta)
-        x0 = a*rho
-        y0 = b*rho
-        x1 = int(round(x0 + 1000*(-b)))
-        y1 = int(round(y0 + 1000*(a))) 
-        x2 = int(round(x0 - 1000*(-b)))  
-        y2 = int(round(y0 - 1000*(a)))
-        cv2.line(debug,(x1,y1),(x2,y2),(0,255,0),3)
-    
+    if lines.size:
+		for rho,theta in lines[0]:
+			a = np.cos(theta)
+			b = np.sin(theta)
+			x0 = a*rho
+			y0 = b*rho
+			x1 = int(round(x0 + 1000*(-b)))
+			y1 = int(round(y0 + 1000*(a))) 
+			x2 = int(round(x0 - 1000*(-b)))  
+			y2 = int(round(y0 - 1000*(a)))
+			cv2.line(debug,(x1,y1),(x2,y2),(0,255,0),3)
+		
     #show results
     cv2.imshow(window,debug)
     cv2.cv.ResizeWindow(window,960,640)
-    cv2.waitKey(WAIT_TIME)
+    cv2.waitKey()
     
     [contour_list,hierarchy] = cv2.findContours(binary, cv2.RETR_LIST,
                                                 cv2.CHAIN_APPROX_SIMPLE)
@@ -177,12 +217,10 @@ def pre_process(image,window,file_name):
 
     cv2.imshow(window,binary)
     cv2.cv.ResizeWindow(window,960,640)
-    cv2.waitKey()
+    cv2.waitKey(WAIT_TIME)
     
     #read the image in numpy
-    #TODO: fix it so we don't have to write to disk
-    cv2.imwrite('TempBin' + file_name, binary)
-    im = scipy.misc.imread('TempBin' + file_name,flatten=1)
+    im = np.array(binary)
     im[im>100]=255
     im[im<=100]=0
     im = 255 - im
@@ -204,18 +242,10 @@ def pre_process(image,window,file_name):
     im2 = ndimage.binary_dilation(im,structure=large_mask,iterations=1).astype(im.dtype)
 
     #write file
-    scipy.misc.imsave('Temp2Bin' + file_name,im)
     scipy.misc.imsave('FinalBin' + file_name,im2)
-    final_bin = cv2.imread('FinalBin' + file_name)
-    temp_bin = cv2.imread('Temp2Bin' + file_name)
-
-    cv2.imshow(window,temp_bin)
+    cv2.imshow(window,im2)
     cv2.cv.ResizeWindow(window,960,640)
-    cv2.waitKey(WAIT_TIME)
-
-    cv2.imshow(window,final_bin)
-    cv2.cv.ResizeWindow(window,960,640)
-    cv2.waitKey(WAIT_TIME)
+    cv2.waitKey()
 
     return final_bin        
     
@@ -280,37 +310,79 @@ def fix_corners(corners):
         out.append((corner[0][0],corner[0][1]))
     return out
     
-       
+def get_orient(file_name):
+	metadata = pyexiv2.ImageMetadata(file_name)
+	metadata.read()
+	tag = metadata['Exif.Image.Orientation']	
+	return tag
+	
+def fix_orient(image,tag):
+	
+	value = tag.value
+	
+	if value == 1:
+		#do nothing
+		out = image.clone()
+	elif value == 2:
+		#flip image horizontally
+		out = cv2.flip(image,1)
+	elif value == 3:
+		#flip vertically, horizontally or rotate 180
+		out = cv2.flip(image,-1)
+	elif value == 4:
+		#flip vertically
+		out = cv2.flip(image,0)
+	elif value == 5:
+		# transpose
+		out = cv2.transpose(image)
+	elif value == 6:
+		# flip vertically, transpose or rotate 90
+		temp = cv2.flip(image,0)
+		out = cv2.transpose(temp)
+	elif value == 7:
+		# flip horizontally, vertically, transpose or transverse
+		temp = cv2.flip(image,-1)
+		out = cv2.transpose(temp)
+	elif value == 8:
+		# flip horizontally, transpose or rotate 270
+		temp = cv2.flip(image,1)
+		out = cv2.transpose(temp)	
+	return out
+	
+	
 def scan_receipt(file_name):
 
-    image = cv2.imread(RECEIPT_PATH + file_name)
-    
-    if image==None:
-        print "Error opening image"
-        sys.exit(1)
-
-    image = cv2.resize(image,(1944,2592))
-
-    cv2.namedWindow('output',cv2.cv.CV_WINDOW_NORMAL)
-    cv2.imshow('output',image)
-    cv2.cv.ResizeWindow('output',960,640)
-    cv2.waitKey(WAIT_TIME)
-    
-    corners = detect_corners(image,'output')
-    if corners:
-        rotated = dewarp(image,'output',corners)
-        clean_image = pre_process(rotated,'output',file_name)
-    else:
-        clean_image = pre_process(image,'output',file_name)
+	orient = get_orient(RECEIPT_PATH + file_name)
+	image = cv2.imread(RECEIPT_PATH + file_name)  
+	
+	if image==None:
+		print "Error opening image"
+		sys.exit(1)
+        
+	
+	image = fix_orient(image,orient)
+	image = cv2.resize(image,(1944,2592))
+	
+	cv2.namedWindow('output',cv2.cv.CV_WINDOW_NORMAL)
+	cv2.imshow('output',image)
+	cv2.cv.ResizeWindow('output',960,640)
+	cv2.waitKey(WAIT_TIME)
+		
+	corners = detect_corners(image,'output')
+	if corners:
+		rotated = dewarp(image,'output',corners)
+		clean_image = pre_process(rotated,'output',file_name)
+	else:
+		clean_image = pre_process(image,'output',file_name)
     #ocr_receipt('output',clean_image,file_name)
 
-    cv2.destroyAllWindows()
+	cv2.destroyAllWindows()
 
-    print 'Done!'
-    return clean_image
+	print 'Done!'
+	return clean_image
     
     
-image = scan_receipt('taco.jpg')
+image = scan_receipt('photo.JPG')
 
 
 
