@@ -10,9 +10,12 @@ import os
 import sys
 import pyexiv2
 import matplotlib.pyplot as plt
+import time
+
 
 RECEIPT_PATH = './images/'
-WAIT_TIME = 500
+WAIT_TIME = 50
+DISPLAY = True
 
 def addtoset(self,addelem):
 	for elem in self:
@@ -26,7 +29,7 @@ def get_points(line):
 	alpha = 10000
 	
 	a = cos(theta)
-	b = sin(theta)	
+	b = sin(theta)  
 	x0 = a*rho
 	y0 = b*rho
 	
@@ -36,6 +39,29 @@ def get_points(line):
 	y2 = int(round(y0 - alpha*(a)))
 	
 	return [(x1,y1),(x2,y2)]
+	
+def rect_measure(corners):
+	# finds similarity of quad to a rectangle, the lower
+	# the number the more it is like a rectangle
+	ang1 = ang_lines([corners[0],corners[1]],[corners[2],corners[3]])
+	ang2 = ang_lines([corners[0],corners[2]],[corners[1],corners[3]])
+	difference = abs(ang1)+abs(ang2)
+	
+	return difference
+	
+def ang_lines(line1,line2):
+	# calculates angle between two lines
+	# lines are defined by pair of tuples which are the end points in x,y
+	
+	dx1 = line1[1][0]-line1[0][0] + 0.
+	dy1 = line1[1][1]-line1[0][1] + 0.
+	dx2 = line2[1][0]-line2[0][0] + 0.
+	dy2 = line2[1][1]-line2[0][1] + 0.
+	
+	dot = dx1*dx2 + dy1*dy2
+	l = sqrt((dx1**2 + dy1**2) * (dx2**2 + dy2**2))
+
+	return acos(dot/l)
 
 def fit_line(line1, line2, min_theta):
 	
@@ -68,7 +94,7 @@ def line_intersect(line1, line2):
 	theta2 = line2[1]
 	
 	a = np.array([[cos(theta1), sin(theta1)],[cos(theta2), sin(theta2)]])
-	b = np.array([rho1,rho2])	
+	b = np.array([rho1,rho2])   
 	
 	det = np.linalg.det(a)
 	
@@ -80,74 +106,71 @@ def line_intersect(line1, line2):
 		return (None,None)
 		
 def color_seg(image,window):
-	# median blur will remove out some text
-	blurred = cv2.medianBlur(image.copy(),35)	
-	#blurred = cv2.pyrMeanShiftFiltering(blurred,20,100,None,4)
 	
-def text_seg(input_img,window,area_thresh=250,perc_thresh=-1,rank_thresh=-1):
-	
-	# remove salt and pepper noise and smooth minimally
-	"""
-	image = cv2.medianBlur(input_img,3)
+	# blur to clean up image blur
+	image = cv2.medianBlur(image,5)
 	image = cv2.GaussianBlur(image,(0,0),3)
-	
-	cv2.imshow(window,image)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey(WAIT_TIME)
-	
-	strelem = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(11,11))
-	blurred = cv2.dilate(image, strelem)
-	text = cv2.subtract(blurred,image)	
-	
-	cv2.imshow(window,text)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey(WAIT_TIME)
-	
-	text_gray = cv2.cvtColor(text,cv2.COLOR_BGR2GRAY)
-	
-	cv2.imshow(window,text_gray)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey(WAIT_TIME)
-	
-	thres= int(round(np.percentile(text_gray,99)))
-	
-	retval,binary = cv2.threshold(text_gray,thres,255,cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-			
-	cv2.imshow(window,binary)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey() """
-	
-	image = cv2.medianBlur(input_img,5)
-	image = cv2.GaussianBlur(image,(0,0),3)
-	cv2.imshow(window,image)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey(WAIT_TIME)
 	
 	image2 = np.array(image,dtype='float32') / 255.
 	colorscale = cv2.cvtColor(image2,cv2.COLOR_BGR2HLS)
 	
 	lightness = colorscale[:,:,1]
-	white_bin = np.zeros(np.shape(lightness),dtype='uint8')	
+	white_bin = np.zeros(np.shape(lightness),dtype='uint8') 
 	lightness_win = np.array(lightness*255,dtype='uint8')
 	
-	print('lightness')
+	print('lightness percentile')
 	print(np.percentile(lightness,50))
-	
-	print('now showing!')
-	
+		
 	white_bin[lightness > 0.35] = 255  
-	cv2.imshow(window,lightness_win)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey()
 	
+	if DISPLAY:
+		cv2.imshow(window,lightness_win)
+		cv2.cv.ResizeWindow(window,960,640)
+		cv2.waitKey(WAIT_TIME)
+	
+
+	
+def area_seg(input_img,window,area_thresh=250,perc_thresh=-1,rank_thresh=-1):
+	#TODO change this so area_thresh is relative to window size
+	
+	# remove salt and pepper noise and smooth minimally
+	"""
+	strelem = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(11,11))
+	blurred = cv2.dilate(image, strelem)
+	text = cv2.subtract(blurred,image)  
+	"""
+	
+	norm_dist = sqrt(324*243.)
+	input_dist = sqrt(input_img.shape[0]*input_img.shape[1]*1.)
+	gauss_blur = int(round(input_dist/norm_dist*3.))
+
+	norm_dist = sqrt(2592*1944.)
+	input_dist = sqrt(input_img.shape[0]*input_img.shape[1]*1.)
+	median_blur = input_dist/norm_dist*31.
+	median_blur = int(round((median_blur-1.)/2)*2+1)
+	if median_blur < 3:
+		median_blur = -1
+
+	
+	image = input_img.copy()
+	if median_blur > 1:
+		image = cv2.medianBlur(image,median_blur)
+	image = cv2.GaussianBlur(image,(0,0),gauss_blur)
+	
+	if DISPLAY:
+		cv2.imshow(window,image)
+		cv2.cv.ResizeWindow(window,960,640)
+		cv2.waitKey(WAIT_TIME)
 	
 	grayscale = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
 	binary = cv2.Canny(grayscale, 10, 20)
 	binary = cv2.dilate(binary,None)
 	
-	cv2.imshow(window,binary)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey()
+	
+	if DISPLAY:
+		cv2.imshow(window,binary)
+		cv2.cv.ResizeWindow(window,960,640)
+		cv2.waitKey(WAIT_TIME)
 	
 	# remove small blobs	
 	mask = [[1,1,1],[1,1,1],[1,1,1]]
@@ -171,65 +194,32 @@ def text_seg(input_img,window,area_thresh=250,perc_thresh=-1,rank_thresh=-1):
 		small_bin = areas < area_thresh
 
 	remove_blobs = small_bin[blobs]
-	binary2[remove_blobs] = 0	
+	binary2[remove_blobs] = 0   
 	
-	cv2.imshow(window,binary2)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey()
+	if DISPLAY:
+		cv2.imshow(window,binary2)
+		cv2.cv.ResizeWindow(window,960,640)
+		cv2.waitKey(WAIT_TIME)
 	
-	#calculate bounding box between
 	return  binary2
-		
-def detect_corners(image,window,area_thresh=250,perc_thresh=-1,rank_thresh=-1):
-	
-	"""debug = image.copy()
-	image_size = [image.shape[0], image.shape[1]]
-	
-	# attempts to remove some txt (salt and pepper noise)using median
-	blurred = cv2.medianBlur(image.copy(),11)
-	
-	#blur image to clean up noise prior to canny
-	blurred = cv2.GaussianBlur(blurred,(0,0),3)
-	cv2.imshow(window,blurred)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey()
-	
-	#TODO: grayscale conversion
-	grayscale = cv2.cvtColor(blurred,cv2.COLOR_BGR2GRAY)
-	cv2.imshow(window,grayscale)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey()
-	
-	# try canny method and then adaptive thresholding	
-	# TODO:  adaptive thresholding	 
-	binary = cv2.Canny(grayscale, 10, 20)
-	binary = cv2.dilate(binary,None)
-	binary = cv2.dilate(binary,None)
-	#binary = cv2.dilate(binary,None)
 
-	cv2.imshow(window,binary)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey()"""
+def hough_corners(image,window):
 	
-	binary = text_seg(image,'output',area_thresh,perc_thresh,rank_thresh)
-			
-	# perform hough transform on images
-	debug = image.copy() 
-	
-	lines = cv2.HoughLines(binary,1, np.pi/90, 1000, None)
+	debug = cv2.cvtColor(image,cv2.COLOR_GRAY2BGR)
+	lines = cv2.HoughLines(image,1, np.pi/90, 500, None)
+
 	if lines is not None:
+		print('Number of lines found')
 		print(len(lines[0]))
 	linetouse = []
 	intersect_pt = []
-	
-	debug2 = debug.copy()
-	
+				
 	#TODO: lots of wasted iterations, only do half of combinations
 	#TODO: check if lines are almost equivalent (not just exactly equivalent)
-	if lines is not None:
+	if (lines is not None) and (len(lines) < 200):
 		for line1 in lines[0]:
 			pts = get_points(line1)
-			cv2.line(debug2,pts[0],pts[1],(0,255,0),3)
+			cv2.line(debug,pts[0],pts[1],(0,255,0),3)
 			for line2 in lines[0]:
 				if not np.all(line1==line2):
 					fit, ang = fit_line(line1,line2,pi*30/180)
@@ -238,58 +228,124 @@ def detect_corners(image,window,area_thresh=250,perc_thresh=-1,rank_thresh=-1):
 						if (pt[0] is not None):# and in_image(pt,debug2):
 							addtoset(linetouse,line1)
 							addtoset(linetouse,line2)
-							addtoset(intersect_pt,pt)	
-	
-	cv2.imshow(window,debug2)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey()
-	
+							addtoset(intersect_pt,pt)   
+			
 	if linetouse is not None:
 		for line in linetouse:
 			pts = get_points(line)
-			cv2.line(debug,pts[0],pts[1],(0,0,255),3)
+			cv2.line(debug,pts[0],pts[1],(0,255,0),3)
 	
 	if intersect_pt is not None:
 		for pt in intersect_pt:
-			cv2.circle(debug,pt,6,(0,255,0),-1)							
+			cv2.circle(debug,pt,6,(0,255,0),-1)						 
 	
-	cv2.imshow(window,debug)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey()
-			
-	[contour_list,hierarchy] = cv2.findContours(binary, cv2.RETR_LIST,
-												cv2.CHAIN_APPROX_SIMPLE)
+	if linetouse is not None:
+		if DISPLAY:
+			cv2.imshow(window,debug)
+			cv2.cv.ResizeWindow(window,960,640)
+			cv2.waitKey()
+		
+def detect_corners(image,window,area_thresh=250,perc_thresh=-1,rank_thresh=-1):
+	
+	#downscale image by 8x to focus on key part of image
+	norm_area = image.shape[0]*image.shape[1] / (1944. * 2592)
+	norm_area = norm_area * 4.
+	scale_factor = log(norm_area,2)
+	scale_factor = int(round(scale_factor))
+	
+	if scale_factor < 1:
+		scale_factor = 0
+	
+	down_img = image
+	for counter in range(scale_factor):
+		down_img = cv2.pyrDown(down_img)
+		
+	if DISPLAY:
+		cv2.namedWindow('output',cv2.cv.CV_WINDOW_NORMAL)
+		cv2.imshow('output',down_img)
+		cv2.cv.ResizeWindow('output',960,640)
+		cv2.waitKey(WAIT_TIME)
+	
+	# TODO:  adaptive thresholding   
+	binary = area_seg(down_img,'output',area_thresh,perc_thresh,rank_thresh)
+	
+	for counter in range(scale_factor):
+		binary = cv2.pyrUp(binary)
+		
+	# perform hough transform on images
+	#ahough_corners(binary,window)
+	
+	# do contour search	 
+	[contour_list,hierarchy] = cv2.findContours(binary.copy(), cv2.RETR_LIST,
+	cv2.CHAIN_APPROX_SIMPLE)
 	contour_candidate = []
-	max_size = 0
-	min_size = 500**2
+	min_size = int(round(0.2 * binary.shape[0] * binary.shape[1]))
+	
+	#TODO: change code so instead of taking the largest contour there is a min 
+	# and a max 
+	edges_color = cv2.cvtColor(binary,cv2.COLOR_GRAY2BGR)
+	good_contour = []
 
 	for contour in contour_list:
-		if cv2.contourArea(contour)> 500:
-			hull = cv2.convexHull(contour)	# find the convex hull of contour
-			hull = cv2.approxPolyDP(hull,0.1*cv2.arcLength(hull,True),True)
-			if len(hull)==4:
-				cv2.drawContours(debug,[hull],0,(0,0,255),3)
-				if ((cv2.contourArea(hull) > max_size)
-					and (cv2.contourArea(hull) > min_size)):
-					max_size = cv2.contourArea(hull)
-					contour_candidate = [contour, hull]
-
-	cv2.imshow(window,debug)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey()
-
-	if contour_candidate:
-		corners = fix_corners(contour_candidate[1])
-		corners = order_rect(corners)
-
-		debug2 = image.copy()
-		for corner in corners:
-			cv2.circle(debug2,corner,9,(0,255,0),-3)
-
-		cv2.imshow(window,debug2)
+		# fix the line below to be relative
+		if cv2.contourArea(contour)> 100:
+			hull = cv2.convexHull(contour)  # find the convex hull of contour
+			app_hull = cv2.approxPolyDP(hull,0.05*cv2.arcLength(hull,True),True)
+			if len(app_hull)==4:
+				area = cv2.contourArea(app_hull)
+				if area > min_size:
+					good_contour.append(app_hull)
+					cv2.drawContours(edges_color,[app_hull],0,(0,255,0),3)
+					if DISPLAY:
+						cv2.imshow(window,edges_color)
+						cv2.waitKey(1)
+				else:
+					cv2.drawContours(edges_color,[app_hull],0,(0,0,255),3)
+					if DISPLAY:
+						cv2.imshow(window,edges_color)
+						cv2.waitKey(1)
+			else:
+				cv2.drawContours(edges_color,[app_hull],0,(0,0,255),3)
+				if DISPLAY:
+					cv2.imshow(window,edges_color)
+					cv2.waitKey(1)
+	
+	contour_candidate = []
+	rect_meas = []
+	min_rect = pi/2.
+	
+	final_contour = []
+	
+	for contour in good_contour:
+		corners = fix_corners(contour)
+		#TODO: check if convex before this chec,
+		if is_convex(corners):
+			corners = order_rect(corners)
+			contour_candidate.append(corners)
+			meas = rect_measure(corners)
+			rect_meas.append(meas)
+			if meas < min_rect:
+				min_rect = meas
+				final_contour = corners
+	
+	print(min_rect)
+	
+	if DISPLAY:
+		cv2.imshow(window,edges_color)
 		cv2.cv.ResizeWindow(window,960,640)
-		cv2.waitKey(WAIT_TIME)
-		return corners
+		cv2.waitKey()
+	
+	if final_contour:
+		debug = image.copy()
+		for corner in final_contour:
+			cv2.circle(debug,corner,9,(0,255,0),-3)		
+			
+		if DISPLAY:
+			cv2.imshow(window,debug)
+			cv2.cv.ResizeWindow(window,960,640)
+			cv2.waitKey()
+			
+		return final_contour
 
 	return None
 	
@@ -302,12 +358,14 @@ def dewarp(image,window,corners):
 				  True, (0,255,0),7)
 
 	#show results
-	cv2.imshow(window,debug)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey(WAIT_TIME)
+	if DISPLAY:
+		cv2.imshow(window,debug)
+		cv2.cv.ResizeWindow(window,960,640)
+		cv2.waitKey(WAIT_TIME)
 
-	
 	# Assemble a rotated rectangle out of that info
+	# Todo: move to cV2
+	np_corners = np.array(corners)
 	rot_box = cv.MinAreaRect2(corners)
 	enc_box = cv.BoundingRect(corners)
 
@@ -327,26 +385,26 @@ def dewarp(image,window,corners):
 													int(round(pt_y+border*2))))
  
 	#show results
-	cv2.imshow(window,rotated)  
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey()
+	if DISPLAY:
+		cv2.imshow(window,rotated)  
+		cv2.cv.ResizeWindow(window,960,640)
+		cv2.waitKey(WAIT_TIME)
    
 	return rotated
 
-def pre_process(image,window,file_name):
-
-	image_size = [image.shape[0], image.shape[1]]
+def pre_ocr(image,window,file_name):	
+	# code to clean up image prior to OCR step
 	
 	#convert to grayscale
 	grayscale = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
 
-	cv2.imshow(window,grayscale)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey(WAIT_TIME)
-
+	if DISPLAY:
+		cv2.imshow(window,grayscale)
+		cv2.cv.ResizeWindow(window,960,640)
+		cv2.waitKey(WAIT_TIME)
    
 	#calculate mask size
-	mask_size = min(image_size[0], image_size[1])
+	mask_size = min(image.shape[0], image.shape[1])
 	mask_size = int(round(mask_size * 0.01))
 	mask_size = max(mask_size,3)
 	if mask_size % 2 == -0:
@@ -354,10 +412,12 @@ def pre_process(image,window,file_name):
 
 	binary = cv2.adaptiveThreshold(grayscale, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
 								   cv2.THRESH_BINARY, mask_size, 5)
-
-	cv2.imshow(window,binary)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey(WAIT_TIME)
+								   
+	if DISPLAY:
+		cv2.imshow(window,binary)
+		cv2.cv.ResizeWindow(window,960,640)
+		cv2.waitKey()
+   
 	
 	#read the image in numpy
 	im = np.array(binary)
@@ -383,11 +443,12 @@ def pre_process(image,window,file_name):
 
 	#write file
 	scipy.misc.imsave('FinalBin' + file_name,im2)
-	cv2.imshow(window,im2)
-	cv2.cv.ResizeWindow(window,960,640)
-	cv2.waitKey()
-
-	return final_bin		
+	
+	if DISPLAY:
+		cv2.imshow(window,im2)
+		cv2.cv.ResizeWindow(window,960,640)
+		cv2.waitKey()
+		
 	
 def ocr_receipt(window,image,file_name):
 	"""string_int=('tesseract ' + 'TempBin' + file_name + ' '
@@ -415,39 +476,95 @@ def ocr_receipt(window,image,file_name):
 	text_file = open(RECEIPT_PATH + file_name[:-4] + '.txt','w')
 	text_file.write(text)
 	text_file.close()
-
-def order_rect(corners):
-
-	distance = []
 	
-	#calculate distance for each point
-	for pt in corners:
-		dist = sqrt(pt[0]**2 + pt[1]**2)
-		distance.append(dist)
+def is_convex(vertices):
+	#checks if within in a list of points that are vertices of a polygon
+	# whether the polygon is convex
+	
+	num_pts = len(vertices)
+	z = np.zeros(num_pts)
+	
+	for pt_idx in range(num_pts):
+		pt1 = vertices[pt_idx % (num_pts-1)]
+		pt2 = vertices[(pt_idx+1) % (num_pts-1)]
+		pt3 = vertices[(pt_idx+2) % (num_pts-1)]
+		
+		dx1 = pt2[0] - pt1[0]
+		dx2 = pt3[0] - pt2[0]
+		dy1 = pt2[1] - pt1[1]
+		dy2 = pt3[1] - pt2[1]
+		z[pt_idx] = dx1*dy2 - dy1*dx2
+	
+	if z[0] > 0:
+		if np.all(z > 0):
+			return True
+		else:
+			return False
+	else:
+		if np.all(z < 0):
+			return True
+		else:
+			return False
+	
+def cmp_pt(a,b,center):
+	# function to compare if a is to the right of b with relation to point c
+	# negative value for less-than,  zero if they are equal, or return a positive value for greater-than
+	
+	a = (a[0]*1.,a[1]*1.)
+	b = (b[0]*1.,b[1]*1.)
+	center = (center[0]*1.,center[1]*1.)
+	
+	if (a[0] >= 0) and (b[0] < 0):
+		return -1
+	if (a[0] == 0) and (b[0] == 0):
+		if a[1] > b[1]:
+			return -1
+		else:
+			return 1
+   
+	# cross product of center -> a and center -> b
+	cross = (a[0]-center[0]) * (b[1]-center[1]) - (b[0]- center[0]) * (a[1] - center[1])
+	if (cross < 0):
+		return -1
+	if (cross > 0):
+		return 1
 
-	top_left = corners[distance.index(min(distance))]
-	bottom_right = corners[distance.index(max(distance))]
-
-	corners2 = corners
-	corners2.remove(top_left)
-	corners2.remove(bottom_right)
-
-	xdist = []
-
-	for pts in corners2:
-		xdist.append(fabs(top_left[0] - pts[0]))
-
-	top_right = corners2[xdist.index(max(xdist))]
-	corners2.remove(top_right)
-	bottom_left = corners2[0]
-
-	out = [top_left, top_right, bottom_left, bottom_right]
+	# points a and b are on the same line from the center
+	# check which point is closer to the center
+	d1 = (a[0]-center[0]) * (a[0]-center[0]) + (a[1]-center[1]) * (a[1]-center[1])
+	d2 = (b[0]-center[0]) * (b[0]-center[0]) + (b[1]-center[1]) * (b[1]-center[1])
+	if d1 > d2:
+		return -1
+	else:
+		return 1
+	
+			
+def order_rect(corners):
+	# puts order of quad corners such that
+	# out = [top_left, top_right, bottom_left, bottom_right]
+	# function fails if quad is not convex
+	
+	if not is_convex(corners):
+		print "Quad isn't convex"
+		sys.exit(1)
+	
+	center_x = 0.25 * (corners[0][0] + corners[1][0] + corners[2][0] + corners[3][0])
+	center_y = 0.25 * (corners[0][1] + corners[1][1] + corners[2][1] + corners[3][1])
+	center = (center_x,center_y)
+	
+	def center_cmp (a,b):
+		return cmp_pt(a,b,center)
+	
+	sorted_corners = sorted(corners,cmp=center_cmp)
+	out = [sorted_corners[1],sorted_corners[0],sorted_corners[2],sorted_corners[3]]
 	return out
 
 def fix_corners(corners):
+	# converts list of lists to list of tuples (why?)   
 	out = []
 	for corner in corners:
 		out.append((corner[0][0],corner[0][1]))
+		
 	return out
 	
 def get_orient(file_name):
@@ -488,53 +605,55 @@ def fix_orient(image,value):
 	elif value == 8:
 		# flip horizontally, transpose or rotate 270
 		temp = cv2.flip(image,1)
-		out = cv2.transpose(temp)	
+		out = cv2.transpose(temp)   
 	return out
 	
 	
 def scan_receipt(file_name):
-
-	image = cv2.imread(RECEIPT_PATH + file_name)  
 	
+	start = time.time()
+	
+	image = cv2.imread(RECEIPT_PATH + file_name)  
+		
 	if image==None:
 		print "Error opening image"
 		sys.exit(1)
 		
 	orient = get_orient(RECEIPT_PATH + file_name)
 	image = fix_orient(image,orient)
-	image = cv2.resize(image,(1944,2592))
 	
-	cv2.namedWindow('output',cv2.cv.CV_WINDOW_NORMAL)
-	cv2.imshow('output',image)
-	cv2.cv.ResizeWindow('output',960,640)
-	cv2.waitKey(WAIT_TIME)
+	#TODO: add border around image to deal with slightly cut off receipts
+	#border = [1,1,1,1]
+	#border = [x*50 for x in border]
+	#image = cv2.copyMakeBorder(image,border[0],border[1],border[2],border[3],cv2.BORDER_CONSTANT)
 	
-	
-	#color_seg(image,'output')	
-	corners = detect_corners(image,'output',area_thresh=250)
-	if corners is None:
-		corners = detect_corners(image,'output',perc_thresh=98)
-		if corners is None:
-			corners = detect_corners(image,'output',rank_thresh=20)
+	corners = detect_corners(image,'output',area_thresh=750)
+	#if corners is None:
+		#corners = detect_corners(image,'output',perc_thresh=95)
+		#if corners is None:
+			#corners = detect_corners(image,'output',rank_thresh=20)
 
 	if corners:
 		rotated = dewarp(image,'output',corners)
-		#clean_image = pre_process(rotated,'output',file_name)
+		#clean_image = pre_(rotated,'output',file_name)
 	else:
+		#if no detected corners than remove the border that was inserted before
 		pass
 		#clean_image = pre_process(image,'output',file_name)
+		
+	pre_ocr(rotated,'output',file_name)
+	
 	#ocr_receipt('output',clean_image,file_name)
-
+	# todo check which image is most square like
+	
+	
+	cv2.waitKey()
 	cv2.destroyAllWindows()
 
-	print 'Done!'
+	elapsed = (time.time() - start)
+	print('Time elapsed: ' + str(elapsed))
 	return 0	
 	
-image = scan_receipt('bullitt.JPG')
+image = scan_receipt('bullitt.jpg')
 
 
-
-
-
-
-	
