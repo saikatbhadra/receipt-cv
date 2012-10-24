@@ -11,10 +11,14 @@ import sys
 import pyexiv2
 import matplotlib.pyplot as plt
 import time
-
-
+import cProfile
+import ocr
 RECEIPT_PATH = './images/'
-WAIT_TIME = 50
+RECEIPT_NAME = 'rib.jpg'
+CLIP = False
+str = RECEIPT_NAME.find('.')
+RECEIPT_STR = RECEIPT_NAME[:str]
+WAIT_TIME = 250
 DISPLAY = True
 
 def addtoset(self,addelem):
@@ -328,8 +332,6 @@ def detect_corners(image,window,area_thresh=250,perc_thresh=-1,rank_thresh=-1):
 				min_rect = meas
 				final_contour = corners
 	
-	print(min_rect)
-	
 	if DISPLAY:
 		cv2.imshow(window,edges_color)
 		cv2.cv.ResizeWindow(window,960,640)
@@ -348,10 +350,66 @@ def detect_corners(image,window,area_thresh=250,perc_thresh=-1,rank_thresh=-1):
 		return final_contour
 
 	return None
+
+def clip(image,window,corners):
+	
+	debug = image.copy()
+		
+	# draw red line around edges for debug purposes
+	cv2.polylines(debug, np.int32([[corners[0],corners[1], corners[3],corners[2]]]),
+				  True, (0,255,0),7)
+				  
+	np_corners = np.array(corners)
+	top_left = np_corners.min(0)
+	bottom_right =np_corners.max(0)
+	
+	# Put in buffer
+	height_buf = int(round(0.05*abs(top_left[0] - bottom_right[0])))
+	width_buf = int(round(0.05*abs(top_left[1] - bottom_right[1])))
+	
+	if top_left[0]- height_buf < 0:
+		top_left[0] = 0
+	else:
+		top_left[0] = top_left[0] - height_buf
+	if top_left[1]-width_buf < 0:
+		top_left[1] = 0
+	else:
+		top_left[1] = top_left[1] - width_buf
+	
+	if bottom_right[0]+height_buf > image.shape[1]:
+		bottom_right[0] = image.shape[1] - 1
+	else:
+		bottom_right[0]+ height_buf
+	if bottom_right[1]+ width_buf > image.shape[0]:
+		bottom_right[1] = image.shape[0] - 1
+	else:
+		bottom_right[1] = bottom_right[1]+ width_buf
+			
+	# draw blue line around edges for debug purposes
+	cv2.polylines(debug, np.int32([[top_left,[top_left[0],bottom_right[1]], 
+	bottom_right, [bottom_right[0],top_left[1]]]]), True, (255,0,0),7)
+				  
+	#show results
+	if DISPLAY:
+		cv2.imshow(window,debug)
+		cv2.cv.ResizeWindow(window,960,640)
+		cv2.waitKey(WAIT_TIME)
+	
+	clip_image = image[top_left[1]:bottom_right[1]+1,top_left[0]:bottom_right[0]+1,:]
+	
+	#show results
+	if DISPLAY:
+		cv2.imshow(window,clip_image)
+		cv2.cv.ResizeWindow(window,960,640)
+		cv2.waitKey(WAIT_TIME)
+		
+	return clip_image
 	
 def dewarp(image,window,corners):
 	
 	debug = image.copy()
+	
+	print(corners)
 
 	# draw red line around edges for debug purposes
 	cv2.polylines(debug, np.int32([[corners[0],corners[1], corners[3],corners[2]]]),
@@ -405,10 +463,12 @@ def pre_ocr(image,window,file_name):
    
 	#calculate mask size
 	mask_size = min(image.shape[0], image.shape[1])
-	mask_size = int(round(mask_size * 0.01))
+	mask_size = int(round(mask_size * 0.04))
 	mask_size = max(mask_size,3)
-	if mask_size % 2 == -0:
+	if mask_size % 2 == 0:
 		mask_size = mask_size + 1
+		
+	print(mask_size)
 
 	binary = cv2.adaptiveThreshold(grayscale, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
 								   cv2.THRESH_BINARY, mask_size, 5)
@@ -416,11 +476,10 @@ def pre_ocr(image,window,file_name):
 	if DISPLAY:
 		cv2.imshow(window,binary)
 		cv2.cv.ResizeWindow(window,960,640)
-		cv2.waitKey()
-   
-	
+		cv2.waitKey(WAIT_TIME)
+		
 	#read the image in numpy
-	im = np.array(binary)
+	im = binary.copy()
 	im[im>100]=255
 	im[im<=100]=0
 	im = 255 - im
@@ -432,25 +491,33 @@ def pre_ocr(image,window,file_name):
 	blob, num_blob = ndimage.label(im,structure=mask)
 	blob_sizes = ndimage.sum(im, blob, range(num_blob + 1))
 	
+	#if DISPLAY:
+	#	plt.imshow(blob)
+	#	plt.show()
+	
+	blob_min = im.shape[0]*im.shape[1] * 0.001
+	
 	#clean up small blobs
-	small_blob = blob_sizes < 5e3
-	remove_small_blob = small_blob[blob]
-	im[remove_small_blob] = 0
+	small_blob = blob_sizes < blob_min
+	im[small_blob[blob]] = 0
+	
+	# todo - clean up edges of receipt and any major non text items on receipt
 	
 	#connect large blobs
-	large_mask = ndimage.generate_binary_structure(2,2)
-	im2 = ndimage.binary_dilation(im,structure=large_mask,iterations=1).astype(im.dtype)
+	#large_mask = mask
+	#im2 = ndimage.binary_dilation(im,structure=large_mask,iterations=1).astype(im.dtype)
 
-	#write file
-	scipy.misc.imsave('FinalBin' + file_name,im2)
-	
 	if DISPLAY:
-		cv2.imshow(window,im2)
+		cv2.imshow(window,im)
 		cv2.cv.ResizeWindow(window,960,640)
 		cv2.waitKey()
 		
+	final = grayscale
 	
-def ocr_receipt(window,image,file_name):
+	return final
+		
+	
+def ocr_receipt(window,image):
 	"""string_int=('tesseract ' + 'TempBin' + file_name + ' '
 					+ RECEIPT_PATH + file_name[:-4] + '_int1')
 	string_int2=('tesseract ' + 'TempBin2' + file_name + ' '
@@ -463,19 +530,27 @@ def ocr_receipt(window,image,file_name):
 	temp = subprocess.call(string_final,shell=True)
 	os.system(string_final)
 	print string_final"""
-	
+		
 	api = tesseract.TessBaseAPI()
 	api.Init(".", "eng", tesseract.OEM_DEFAULT)
+	api.SetVariable("tessedit_char_whitelist", "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ=-,.\/:")
 	api.SetPageSegMode(tesseract.PSM_AUTO)
-	tesseract.SetCvImage(image,api)
-	text=api.GetUTF8Text()
-	conf=api.AllWordConfidences()
-
-	print text
-
-	text_file = open(RECEIPT_PATH + file_name[:-4] + '.txt','w')
-	text_file.write(text)
-	text_file.close()
+	
+	img_file = "test.png"
+	cv2.imwrite(img_file,image)
+	mbuffer=open(img_file,"rb").read()
+	result = tesseract.ProcessPagesBuffer(mbuffer,len(mbuffer),api)
+	#tesseract.SetCvImage(ocr_img,api)
+	#text=api.GetUTF8Text()
+	conf=api.MeanTextConf()
+	conf2=api.AllWordConfidences()
+	
+	print('Result: ')
+	print(result)
+	
+	#text_file = open(RECEIPT_PATH + file_name[:-4] + '.txt','w')
+	#text_file.write(text)
+	#text_file.close()
 	
 def is_convex(vertices):
 	#checks if within in a list of points that are vertices of a polygon
@@ -612,8 +687,11 @@ def fix_orient(image,value):
 def scan_receipt(file_name):
 	
 	start = time.time()
-	
 	image = cv2.imread(RECEIPT_PATH + file_name)  
+	
+	#if (image.shape[1] < 1944):
+	#	image = cv2.resize(image, (2592,1944))
+	#	image = cv2.resize(image, (2592,1944))
 		
 	if image==None:
 		print "Error opening image"
@@ -623,9 +701,6 @@ def scan_receipt(file_name):
 	image = fix_orient(image,orient)
 	
 	#TODO: add border around image to deal with slightly cut off receipts
-	#border = [1,1,1,1]
-	#border = [x*50 for x in border]
-	#image = cv2.copyMakeBorder(image,border[0],border[1],border[2],border[3],cv2.BORDER_CONSTANT)
 	
 	corners = detect_corners(image,'output',area_thresh=750)
 	#if corners is None:
@@ -634,26 +709,48 @@ def scan_receipt(file_name):
 			#corners = detect_corners(image,'output',rank_thresh=20)
 
 	if corners:
-		rotated = dewarp(image,'output',corners)
-		#clean_image = pre_(rotated,'output',file_name)
+		if CLIP:
+			rotated = clip(image,'output',corners)
+		else:
+			rotated = dewarp(image,'output',corners)
 	else:
-		#if no detected corners than remove the border that was inserted before
-		pass
-		#clean_image = pre_process(image,'output',file_name)
-		
-	pre_ocr(rotated,'output',file_name)
+		rotated = image
+
+	ocr_img = rotated
+	ocr_img = pre_ocr(rotated,'output',file_name)
 	
-	#ocr_receipt('output',clean_image,file_name)
-	# todo check which image is most square like
+	if not CLIP:
+		height = ocr_img.shape[0]
+		width = ocr_img.shape[1]
+		height_add = int(round(0.15 * height))
+		width_add = int(round(0.15 * width))
+		ocr_img = cv2.copyMakeBorder(ocr_img, height_add, height_add, width_add, width_add, cv2.BORDER_CONSTANT)
+			
+	cv2.imwrite(RECEIPT_STR+'_final.png',ocr_img)
 	
+	"""if DISPLAY:
+		plt.imshow(ocr_img)
+		plt.show()"""
 	
-	cv2.waitKey()
+	ocr.recognizeFile(RECEIPT_STR+'_final.png',RECEIPT_STR+'.txt','English','txt')
+	
 	cv2.destroyAllWindows()
 
 	elapsed = (time.time() - start)
-	print('Time elapsed: ' + str(elapsed))
-	return 0	
+	print('Time elapsed: ')
+	print(elapsed)
 	
-image = scan_receipt('bullitt.jpg')
+	file = open(RECEIPT_STR+'.txt')
+	while 1:
+		line = file.readline()
+		if not line:
+			break
+		print(line)
+	
+	file.close()
+	cv2.waitKey()
+	
+	return 0	
 
+image = scan_receipt(RECEIPT_NAME)
 
